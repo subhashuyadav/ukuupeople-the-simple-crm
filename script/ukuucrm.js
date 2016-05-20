@@ -61,23 +61,32 @@ jQuery(function ($) {
 });
 
 jQuery(document).ready(function() {
-    touchpoint = '#'+jQuery("#touchpoint-types").parent().attr('id');
-    jQuery( touchpoint ).insertBefore("#post-body-content");
-    jQuery( "#touchpoint-types" ).removeClass( "postbox" );
-    jQuery('.graph-main-container').insertBefore("#posts-filter");
-    jQuery('#activity-list').insertAfter("#postbox-container-2 #wpcf-post-relationship");
-    noteChanges(jQuery('select#touchpoint-list'));
+  // Alter taxonomy field for single-selection in quick edit (for touchpoint only)
+  jQuery(".wp-type-activity-types-checklist input[type='checkbox']").on('click', function () {
+    var current_selection = jQuery(this).val();
+    jQuery(".cat-checklist input[type='checkbox']").each( function (index, value) {
+      if ( jQuery(this).val() != current_selection )
+        jQuery(this).prop('checked', false);
+    });
+  });
 
-    jQuery('.post-type-wp-type-activity #submitpost #publish').click( function() {
+  touchpoint = '#'+jQuery("#touchpoint-types").parent().attr('id');
+  jQuery( touchpoint ).insertBefore("#post-body-content");
+  jQuery( "#touchpoint-types" ).removeClass( "postbox" );
+  jQuery('.graph-main-container').insertBefore("#posts-filter");
+  jQuery('#activity-list').insertAfter("#postbox-container-2 #wpcf-post-relationship");
+  noteChanges(jQuery('select#touchpoint-list'));
+
+  jQuery('.post-type-wp-type-activity #submitpost #publish').click( function() {
 	var arr = ['startdate', 'enddate'];
 	jQuery.each(arr, function( index, value ) {
-	    var display = jQuery('div[data-wpt-id="wpcf-'+value+'"]').find('input').val();
-	    var note = jQuery('select#touchpoint-list').val();
-            if ( (display == '' || !display) && (note == 'wp-type-activity-note')) {
-		jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-startdate input').prop("disabled",true);
-		jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-enddate input').prop("disabled",true);
-		jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-status input').prop("disabled",true);
-            }
+    var display = jQuery('div[data-wpt-id="wpcf-'+value+'"]').find('input').val();
+	  var note = jQuery('select#touchpoint-list').val();
+    if ( (display == '' || !display) && (note == 'wp-type-activity-note')) {
+      jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-startdate input').prop("disabled",true);
+      jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-enddate input').prop("disabled",true);
+      jQuery('.post-type-wp-type-activity .cmb2-id-wpcf-status input').prop("disabled",true);
+    }
 	});
     });
 
@@ -158,7 +167,7 @@ jQuery(document).ready(function() {
 	jQuery.each(availableTags, function( index, value ) {
 	    assing_result.push({ 'value' : value.id , 'label' : value.name});
 	});
-    });
+});
 
 
   function split( val ) {
@@ -322,10 +331,32 @@ assing_result, extractLast( request.term ) ) );
 	    jQuery('<div class="invalidrange">Invalid date of birth</div>').insertAfter(".cmb2-id-wpcf-ukuu-date-of-birth .cmb-td");
 	    jQuery('.invalidrange').css('color','red');
 	    jQuery('input[id="publish"]').prop('disabled', true);
-	    } else {
+	  } else {
 	    jQuery('.invalidrange').remove();
 	    jQuery('input[id="publish"]').prop('disabled', false);
-	  }
+	}
+    });
+
+  jQuery("#wpcf-enddate_date,#wpcf-enddate_time,#wpcf-startdate_date,#wpcf-enddate_time ").change( function() {
+    if ( jQuery('#wpcf-enddate_time').val() == '' )
+      return false;
+    var startdate = jQuery("#wpcf-startdate_date").val();
+    var enddate = jQuery("#wpcf-enddate_date").val();
+    var starttime = jQuery("#wpcf-startdate_time").val();
+    var endtime = jQuery("#wpcf-enddate_time").val();
+    var start = startdate + ' ' + starttime ;
+    var end = enddate + ' ' + endtime ;
+    var startTime = new Date(start);
+    var endTime = new Date(end);
+    if ( startTime > endTime ) {
+	    jQuery('.invalidrange').remove();
+	    jQuery('<div class="invalidrange">Enddate or endtime can not be less than startdate or starttime</div>').insertAfter(".cmb2-id-wpcf-enddate .cmb-td");
+	    jQuery('.invalidrange').css('color','red');
+	    jQuery('input[id="publish"]').prop('disabled', true);
+    } else {
+	    jQuery('.invalidrange').remove();
+	    jQuery('input[id="publish"]').prop('disabled', false);
+    }
   });
 });
 
@@ -511,12 +542,4 @@ jQuery( '#graph' ).ready(function() {
     }
 });
 
- // Alter taxonomy field for single-selection in quick edit (for touchpoint only)
- jQuery(".wp-type-activity-types-checklist input[type='checkbox']").on('click', function () {
-  var current_selection = jQuery(this).val();
 
-  jQuery(".cat-checklist input[type='checkbox']").each( function (index, value) {
-    if ( jQuery(this).val() != current_selection )
-      jQuery(this).prop('checked', false);
-  });
-});

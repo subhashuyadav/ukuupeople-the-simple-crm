@@ -244,15 +244,20 @@ class UkuuPeople {
     }
 
     if( $pagenow == 'edit.php' && isset( $_GET['post_type'] ) && 'wp-type-activity' == $_GET['post_type']  && $query->is_main_query() )  {
-      if(  ( isset($_GET['wp-type-activity-types']) && $_GET['wp-type-activity-types'] != '' ) ) {
+      // Filter touchpoint based on touchpoint type
+      if( ( isset( $_GET['wp-type-activity-types'] ) && $_GET['wp-type-activity-types'] != '' ) ) {
         $pieces['join'] .= " INNER JOIN wp_terms ON (wp_term_relationships.term_taxonomy_id = wp_terms.term_id)";
-      }
 
-      if( 'wp-type-activity' == $_GET['post_type'] && isset( $_GET['wp-type-activity-types'] ) && $_GET['wp-type-activity-types'] != '' ) {
         $subtype = $_GET['wp-type-activity-types'];
         $pieces['where'] .= " AND (wp_terms.slug = '$subtype')";
       }
-    }    
+
+      // Filter touchpoint based on touchpoint contact
+      if ( ( isset( $_GET['touchpoint-contact'] ) && $_GET['touchpoint-contact'] != '' ) ) {
+        $tp_contact = $_GET['touchpoint-contact'];
+        $pieces['where'] .= " AND {$wpdb->postmeta}.meta_value = {$tp_contact} AND {$wpdb->postmeta}.meta_key IN ('_wpcf_belongs_wp-type-contacts_id', '_wpcf_belongs_wp-type-activity_id' ) ";
+      }
+    }
     return $pieces;
   }
 
@@ -1613,22 +1618,23 @@ class UkuuPeople {
     global $typenow;
     $user_ID = get_current_user_id();
 
-    $full_access = FALSE;
-    if ( $user_ID == 1 || user_can( $user_ID, 'edit_all_ukuupeoples' ) || user_can( $user_ID, 'read_all_ukuupeoples' ) || user_can( $user_ID, 'delete_all_ukuupeoples' ) || user_can( $user_ID, 'read_all_touchpoints' ) || user_can( $user_ID, 'edit_all_touchpoints' ) || user_can( $user_ID, 'delete_all_touchpoints' ))
-    $full_access = TRUE;
-
     if ( $typenow == "wp-type-contacts" ) {
       wp_enqueue_script( 'd3', UKUUPEOPLE_RELPATH.'/script/d3/d3.min.js' , array() );
       wp_enqueue_script( 'ukuucrm', UKUUPEOPLE_RELPATH.'/script/ukuucrm.js' , array() );
       $url = admin_url( 'edit.php' );
       $string = $graph = array();
       $filters = array( 'wp-type-group', 'wp-type-tags', 'wp-type-contacts-subtype' );
+
+      $ukuupeople_full_access = FALSE;
+      if ( $user_ID == 1 || user_can( $user_ID, 'edit_all_ukuupeoples' ) || user_can( $user_ID, 'read_all_ukuupeoples' ) || user_can( $user_ID, 'delete_all_ukuupeoples' ) )
+        $ukuupeople_full_access = TRUE;
+
       foreach ( $filters as $tax_slug ) {
         $tax_obj = get_taxonomy( $tax_slug );
         $tax_name = $tax_obj->labels->name;
         global $wpdb, $current_user;
 
-        if ( ! $full_access ) {
+        if ( ! $ukuupeople_full_access ) {
           $terms = $wpdb->get_results( $wpdb->prepare(
                      "
                SELECT $wpdb->terms.term_id, $wpdb->terms.slug , $wpdb->terms.name, COALESCE(s.count ,0) AS count
@@ -1721,7 +1727,7 @@ class UkuuPeople {
       $count_posts = (array) wp_count_posts( $typenow, 'readable', false );
       unset( $count_posts['auto-draft'] );
       $counts = $count_posts['private'];
-     if ( ! $full_access ) {
+     if ( ! $ukuupeople_full_access ) {
         $counts = 0;
         foreach( $terms as $k => $v ){
           $counts += $v->count;
@@ -1760,6 +1766,7 @@ class UkuuPeople {
     }
     if ( $typenow == "wp-type-activity" ) {
       global $current_user;
+
       $args = array(
         'fields' => 'ids',
         'post_type' => 'wp-type-contacts',
@@ -1775,16 +1782,34 @@ class UkuuPeople {
       $postslist = get_posts( $args );
       wp_enqueue_script( 'd3', UKUUPEOPLE_RELPATH.'/script/d3/d3.min.js' , array() );
       wp_enqueue_script( 'ukuucrm', UKUUPEOPLE_RELPATH.'/script/ukuucrm.js' , array() );
+
       $filters = array('wp-type-activity-types');
       $url = admin_url('edit.php');
       $string = $graph = array();
       $graphTouchpoint = array();
-      $li_color = array( 'wp-type-activity-meeting' => '#377CB6' , 'wp-type-activity-phone' => '#771D78'  , 'wp-type-activity-note' => '#3DA999' , 'wp-type-contactform' => '#E6397A' , 'other' => '#d3d3d3');
+      $li_color = array( 'wp-type-activity-meeting' => '#377CB6' , 'wp-type-activity-phone' => '#771D78'  , 'wp-type-activity-note-2' => '#3DA999' , 'wp-type-contactform' => '#E6397A' , 'other' => '#d3d3d3');
+
+      // check if user has full access
+      $touchpoint_full_access = FALSE;
+      if ( user_can( $user_ID, 'read_all_touchpoints' ) || user_can( $user_ID, 'edit_all_touchpoints' ) || user_can( $user_ID, 'delete_all_touchpoints' ))
+        $touchpoint_full_access = TRUE;
+
       foreach ( $filters as $tax_slug ) {
         $tax_obj = get_taxonomy( $tax_slug );
         $tax_name = $tax_obj->labels->name;
         global $wpdb;
-         if ( ! $full_access ) {
+
+        // build touchpoint query
+        $tp_query = "
+          SELECT $wpdb->terms.term_id, $wpdb->terms.slug, $wpdb->posts.post_status, $wpdb->terms.name, COUNT($wpdb->posts.ID) AS count
+          FROM $wpdb->posts
+          LEFT JOIN $wpdb->term_relationships ON $wpdb->term_relationships.object_id = $wpdb->posts.ID
+          LEFT JOIN $wpdb->terms ON $wpdb->terms.term_id = $wpdb->term_relationships.term_taxonomy_id
+          WHERE $wpdb->posts.post_type = 'wp-type-activity'
+          AND ( $wpdb->posts.post_status IN ( 'private', 'draft', 'trash' ) )
+        ";
+
+        if ( ! $touchpoint_full_access ) {
           $que = $wpdb->get_results( $wpdb->prepare(
                    "
                SELECT $wpdb->postmeta.post_id
@@ -1797,87 +1822,70 @@ class UkuuPeople {
          $data = explode( ",", $que[0]['post_id']);
          $que = serialize($data);
 
-          $terms = $wpdb->get_results( $wpdb->prepare(
-               "
-               SELECT $wpdb->terms.term_id, $wpdb->terms.slug , $wpdb->terms.name, COALESCE(s.count ,0) AS count
-               FROM $wpdb->terms
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->terms.term_id = $wpdb->term_taxonomy.term_id)
-               LEFT JOIN (SELECT  COUNT($wpdb->posts.ID) as count, slug , name , $wpdb->terms.term_id FROM $wpdb->users
-               LEFT JOIN $wpdb->posts ON ($wpdb->posts.post_author = $wpdb->users.ID)
-               LEFT JOIN $wpdb->term_relationships ON ($wpdb->posts.ID = $wpdb->term_relationships.object_id)
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->term_relationships.term_taxonomy_id = $wpdb->term_taxonomy.term_taxonomy_id)
-               LEFT JOIN $wpdb->terms ON ($wpdb->term_taxonomy.term_id = $wpdb->terms.term_id)
-               WHERE (post_status = 'publish' OR  post_status = 'private')
-               AND (post_author = %d OR $wpdb->posts.ID IN (SELECT $wpdb->posts.ID FROM $wpdb->postmeta LEFT JOIN $wpdb->posts ON ( $wpdb->posts.ID = $wpdb->postmeta.post_id) WHERE ( ($wpdb->postmeta.meta_key = '_wpcf_belongs_wp-type-contacts_id' AND $wpdb->postmeta.meta_value = %d) OR ($wpdb->postmeta.meta_key = 'wpcf_assigned_to' AND $wpdb->postmeta.meta_value = '{$que}') ) AND $wpdb->posts.post_author != %d ))
-               AND post_type = 'wp-type-activity'
-               AND slug IS NOT NULL
-               AND taxonomy= %s group by slug ) as s
-               ON ($wpdb->term_taxonomy.term_id = s.term_id)
-               WHERE taxonomy= %s ORDER BY $wpdb->terms.term_id ASC
-               ",
-               $user_ID,
-               $postslist[0],
-               $user_ID,
-               $tax_slug,
-               $tax_slug
-               ) , OBJECT );
-
-          $get_trash = $wpdb->get_results( $wpdb->prepare(
-               "
-               SELECT $wpdb->terms.term_id, $wpdb->terms.slug , $wpdb->terms.name, COALESCE(s.count ,0) AS count
-               FROM $wpdb->terms
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->terms.term_id = $wpdb->term_taxonomy.term_id)
-               LEFT JOIN (SELECT  COUNT($wpdb->posts.ID) as count, slug , name , $wpdb->terms.term_id FROM $wpdb->users
-               LEFT JOIN $wpdb->posts ON ($wpdb->posts.post_author = $wpdb->users.ID)
-               LEFT JOIN $wpdb->term_relationships ON ($wpdb->posts.ID = $wpdb->term_relationships.object_id)
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->term_relationships.term_taxonomy_id = $wpdb->term_taxonomy.term_taxonomy_id)
-               LEFT JOIN $wpdb->terms ON ($wpdb->term_taxonomy.term_id = $wpdb->terms.term_id)
-               WHERE (post_status = 'trash')
-               AND (post_author = %d OR $wpdb->posts.ID IN (SELECT $wpdb->posts.ID FROM $wpdb->postmeta LEFT JOIN $wpdb->posts ON ( $wpdb->posts.ID = $wpdb->postmeta.post_id) WHERE ( ($wpdb->postmeta.meta_key = '_wpcf_belongs_wp-type-contacts_id' AND $wpdb->postmeta.meta_value = %d) OR ($wpdb->postmeta.meta_key = 'wpcf_assigned_to' AND $wpdb->postmeta.meta_value = '{$que}') ) AND $wpdb->posts.post_author != %d ))
-               AND post_type = 'wp-type-activity'
-               AND slug IS NOT NULL
-               AND taxonomy= %s group by slug ) as s
-               ON ($wpdb->term_taxonomy.term_id = s.term_id)
-               WHERE taxonomy= %s ORDER BY $wpdb->terms.term_id ASC
-               ",
-               $user_ID,
-               $postslist[0],
-               $user_ID,
-               $tax_slug,
-               $tax_slug
-               ) , OBJECT );
-
-          $trashCount = 0;
-          foreach ( $get_trash as $trash_object ) {
-            $trashCount += $trash_object->count;
-          }
-
-        } else {
-          $terms = $wpdb->get_results( $wpdb->prepare(
-                     "
-               SELECT $wpdb->terms.term_id, $wpdb->terms.slug , $wpdb->terms.name, COALESCE(s.count ,0) AS count
-               FROM $wpdb->terms
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->terms.term_id = $wpdb->term_taxonomy.term_id)
-               LEFT JOIN (SELECT  COUNT($wpdb->posts.ID) as count, slug , name , $wpdb->terms.term_id FROM $wpdb->posts
-               LEFT JOIN $wpdb->term_relationships ON ($wpdb->posts.ID = $wpdb->term_relationships.object_id)
-               LEFT JOIN $wpdb->term_taxonomy ON ($wpdb->term_relationships.term_taxonomy_id = $wpdb->term_taxonomy.term_taxonomy_id)
-               LEFT JOIN $wpdb->terms ON ($wpdb->term_taxonomy.term_id = $wpdb->terms.term_id)
-               WHERE (post_status = 'publish' OR  post_status = 'private')
-               AND post_type = 'wp-type-activity'
-               AND slug IS NOT NULL
-               AND taxonomy= %s group by slug ) as s
-               ON ($wpdb->term_taxonomy.term_id = s.term_id)
-               WHERE taxonomy= %s ORDER BY $wpdb->terms.term_id ASC
-               ",
-               $tax_slug ,
-               $tax_slug
-               ) , OBJECT);
+          $tp_query .= "
+             AND ( $wpdb->posts.post_author = {$user_ID} OR $wpdb->posts.ID IN (SELECT $wpdb->posts.ID FROM $wpdb->postmeta LEFT JOIN $wpdb->posts ON ( $wpdb->posts.ID = $wpdb->postmeta.post_id) WHERE ( ($wpdb->postmeta.meta_key = '_wpcf_belongs_wp-type-contacts_id' AND $wpdb->postmeta.meta_value = {$postslist[0]}) OR ($wpdb->postmeta.meta_key = 'wpcf_assigned_to' AND $wpdb->postmeta.meta_value = '{$que}') ) AND $wpdb->posts.post_author != {$user_ID} )) ";
         }
+
+        $tp_query .= "GROUP BY $wpdb->terms.name, $wpdb->posts.post_status ORDER BY $wpdb->terms.term_id ASC";
+
+        // get touchpoint counts
+        $tp_counts = $wpdb->get_results( $tp_query, OBJECT );
+
+        // get all touchpoint types
+        $touchpoint_types = get_terms(
+          'wp-type-activity-types',
+          array(
+            'orderby'    => 'id',
+            'hide_empty' => 0,
+          )
+        );
+
+      // group touchpoints by their types
+        $tp_group = array();
+        $tp_trash_count = $tp_all_count = 0;
+        foreach ( $tp_counts as $tp_object ) {
+          if ( $tp_object->post_status == 'trash' ) {
+            $tp_trash_count += $tp_object->count;
+            continue;
+          }
+          elseif ( isset( $tp_object->name ) && $tp_object->name != NULL ) {
+            $tp_group[ $tp_object->name ] = new stdClass();
+            $tp_group[ $tp_object->name ]->slug    = $tp_object->slug;
+            $tp_group[ $tp_object->name ]->term_id = $tp_object->term_id;
+            // get_count
+            if ( ! isset ( $tp_group[ $tp_object->name ]->count ) )
+              $tp_group[ $tp_object->name ]->count = 0;
+
+            $tp_group[ $tp_object->name ]->count = $tp_group[ $tp_object->name ]->count + $tp_object->count;
+          }
+          $tp_all_count += $tp_object->count;
+        }
+
+        // set remaining touchpoint types
+        if ( count( $tp_group ) != count( $touchpoint_types ) ) {
+          foreach ( $touchpoint_types as $tp_type ) {
+            if ( ! array_key_exists( $tp_type->name, $tp_group ) ) {
+              $tp_group[ $tp_type->name ] = new stdClass();
+              $tp_group[ $tp_type->name ]->slug    = $tp_type->slug;
+              $tp_group[ $tp_type->name ]->term_id = $tp_type->term_id;
+              $tp_group[ $tp_type->name ]->count   = $tp_type->count;
+
+              // Increase All count (mostly will be zero)
+              $tp_all_count += $tp_type->count;
+            }
+          }
+        }
+
+        //~ print_r($tp_counts);
+        //~ print_r($touchpoint_types);
+        //~ print_r("tp_group");print_r($tp_group);
+        //~ print_r("tp_trash_count");print_r($tp_trash_count);
+        //~ print_r("tp_all_count");print_r($tp_all_count);exit;
         echo "<select name='$tax_slug' id='$tax_slug' class='postform'>";
         echo "<option value=''>Show All $tax_name</option>";
-        foreach ( $terms as $term ) {
+        foreach ( $tp_group as $term_name => $term ) {
           $selected = isset( $_GET[$tax_slug] ) ? $_GET[$tax_slug] : null;
-          echo '<option value='. $term->slug, $selected == $term->slug ? ' selected="selected"' : '','>' . $term->name .' (' . $term->count .')</option>';
+          echo '<option value='. $term->slug, $selected == $term->slug ? ' selected="selected"' : '','>' . $term_name .' (' . $term->count .')</option>';
           if ($tax_slug == "wp-type-activity-types" ) {
             $graphTouchpoint[] = $term->count;
             $selectedColor[$term->slug] = get_option('term_category_radio_' . $term->slug);
@@ -1893,43 +1901,33 @@ class UkuuPeople {
             else {
               $selectedColor[$term->slug] = $style = '#d3d3d3';
             }
-            $string[]  = "<li class='{$term->slug}''><svg height='10' width='10'><circle cx='5' cy='5' r='4' stroke-width='3' fill='$style' /></svg> <a href=' ". add_query_arg( array('post_type' => 'wp-type-activity', 'wp-type-activity-types' => $term->slug), $url )."' $class'>{$term->name} </a>($term->count)</li>";
+            $string[]  = "<li class='{$term->slug}''><svg height='10' width='10'><circle cx='5' cy='5' r='4' stroke-width='3' fill='$style' /></svg> <a href=' ". add_query_arg( array('post_type' => 'wp-type-activity', 'wp-type-activity-types' => $term->slug), $url )."' $class'>{$term_name} </a>($term->count)</li>";
           }
         }
         echo "</select>";
       }
       // Filter post by Touchpoint Contact
-      wp_reset_query();  // Restore global post data stomped by the_post().
+      wp_reset_query();
       $args = array(
-        'post_type' => 'wp-type-contacts',
-        //'post_status' => 'publish',
+        'post_type'      => 'wp-type-contacts',
+        'post_status'    => array('publish', 'private'),
+        'posts_per_page' => -1,
       );
-      $loop = new WP_Query( $args );
+      $loop = get_posts( $args );
+
       echo "<select name='touchpoint-contact' id='touchpoint-contact' class='postform'>";
       echo "<option value=''>".__( 'Show All', 'UkuuPeople' )." Touchpoint Contact</option>";
-      foreach ( $loop->posts as $keys => $values ) {
-        $selected = isset($_GET['touchpoint-contact']) ? $_GET['touchpoint-contact'] : null;
+      $selected = isset($_GET['touchpoint-contact']) ? $_GET['touchpoint-contact'] : null;
+      foreach ( $loop as $values ) {
         $display = get_post_meta( $values->ID , 'wpcf-display-name', true);
         echo '<option value='. $values->ID , $selected == $values->ID ? ' selected="selected"' : '','>' . $display .'</option>';
       }
       echo "</select>";
-      $count_posts = (array) wp_count_posts( $typenow );
-      unset($count_posts['auto-draft']);
-      $counts = $count_posts['private'];
-      // backward compatibility
-      if ( isset( $count_posts['publish'] ) )
-        $counts += $count_posts['publish'];
-      if ( ! $full_access ) {
-        $counts = 0;
-        foreach( $terms as $k => $v ){
-          $counts += $v->count;
-        }
-      }
       $selected = ( count( $_GET ) == 1 ) ? 'current' : '';
-      $string[]  = "<li class='all'><a href=' ". add_query_arg( array( 'post_type' => 'wp-type-activity' ) ,$url )."' class='$selected'>".__( 'All', 'UkuuPeople' )." </a>($counts)</li>";
-      $trashCount = isset( $trashCount ) ? $trashCount : $count_posts['trash'];
+      $string[]  = "<li class='all'><a href=' ". add_query_arg( array( 'post_type' => 'wp-type-activity' ) ,$url )."' class='$selected'>".__( 'All', 'UkuuPeople' )." </a>($tp_all_count)</li>";
+
       $selected = isset( $_GET['post_status'] ) && $_GET['post_status'] == 'trash' ? 'current' : '';
-      $string[]  = "<li class='trash'><a href=' ". add_query_arg( array('post_type' => 'wp-type-activity', 'post_status' => 'trash') ,$url )."' class='$selected'>".__( 'Trash', 'UkuuPeople' )."</a>($trashCount)</li>";
+      $string[]  = "<li class='trash'><a href=' ". add_query_arg( array('post_type' => 'wp-type-activity', 'post_status' => 'trash') ,$url )."' class='$selected'>".__( 'Trash', 'UkuuPeople' )."</a>($tp_trash_count)</li>";
       if ( !empty( $graphTouchpoint ) ) {
         echo '<div class="graph-main-container" style="width:70% !important">';
         $str = implode($string, ' | ');
@@ -2422,6 +2420,29 @@ class UkuuPeople {
       }
       if ( isset( $_POST['wpcf-pr-belongs'] ) && empty( $_POST['hidden_cid'] ) )
       update_post_meta( $post_ID , "_wpcf_belongs_wp-type-contacts_id", $_POST['wpcf-pr-belongs'] );
+
+      // Handling bulk edit for taxonomy terms
+      if ( isset( $_GET['bulk_edit'] ) && $_GET['bulk_edit'] == 'Update' ) {
+        if ( isset( $_GET['tax_input']['wp-type-activity-types'] ) ) {
+          // If multiple value is selected undo the changes done by wordpress by reassigning previous term
+          // Assign oldest term to the post again
+          if ( count( $_GET['tax_input']['wp-type-activity-types'] ) > 2 ) {
+            foreach ( $_GET['post'] as $single_post ) {
+              $post_terms = wp_get_post_terms( $single_post, 'wp-type-activity-types', array( 'orderby' => 'object_id', 'order' => 'ASC', 'fields' => 'all'));
+              $add_term = $post_terms[0]->term_id;
+              wp_delete_object_term_relationships( $single_post, 'wp-type-activity-types' );
+              wp_set_object_terms( $single_post, $add_term, 'wp-type-activity-types' );
+            }
+          }
+          else {
+            // assign user selected value
+            $terms_id = (int)$_GET['tax_input']['wp-type-activity-types'][1];
+            foreach ( $_GET['post'] as $single_post ) {
+              wp_set_object_terms( $single_post, $terms_id, 'wp-type-activity-types' );
+            }
+          }
+        }
+      }
     }
   }
 
